@@ -26,6 +26,7 @@
 """
 from __future__ import division, print_function
 import sys
+from pprint import pprint
 
 
 IPP_BUF_SIZE = 32767
@@ -324,7 +325,7 @@ def decode_datetime(value):
 
 def decode_value(tag, value):
     """
-    3.5.2 Value Tags
+        3.5.2 Value Tags
 
         The remaining tables show values for the "value-tag" field, which is
         the first octet of an attribute. The "value-tag" field specifies the
@@ -485,6 +486,10 @@ def decode_value(tag, value):
 
 def parse_attr_1val(ipp):
     """Parse an attribute with one value
+
+        https://tools.ietf.org/html/draft-sweet-rfc2910bis-07
+        Internet Printing Protocol/1.1: Encoding and Transport
+
         3.1.4 Picture of the Encoding of an Attribute-with-one-value
 
         Each "attribute-with-one-value" field is encoded as follows:
@@ -501,25 +506,53 @@ def parse_attr_1val(ipp):
         |                     value                   |   v bytes
         -----------------------------------------------
     """
+    attributes = []
     while True:
         tag = ipp.read_tag()
         if tag is None or tag in GROUP_TAGS:
-            return tag
+            return tag, attributes
         n = be2(ipp.read(2))
         name = None if n == 0 else ipp.read(n)
         v = be2(ipp.read(2))
         value = None if v == 0 else ipp.read(v)
-        print('\t\ttag=0x%02x %s n=%d,v=%d' % (tag, TAG_NAME.get(tag, 'UNKNOWN'), n, v))
+        tag_s = TAG_NAME.get(tag, 'UNKNOWN')
+        name_s = value_s = None
+        print('\t\ttag=0x%02x %s n=%d,v=%d' % (tag, tag_s, n, v))
         if name is not None:
-            print('\t\t    name="%s"' % T(name))
+            name_s = T(name)
+            print('\t\t    name="%s"' % name_s)
         if value is not None:
-            s = decode_value(tag, value)
-            print('\t\t    value=%r' % s)
+            value_s = decode_value(tag, value)
+            print('\t\t    value=%r' % value_s)
+        # assert (tag == IPP_TAG_NOVALUE) == (v == 0), (tag_s, name_s, value_s)
+        attributes.append((tag_s, name_s, value_s))
 
+
+def combine_attribute_values(attributes):
+    combined_attributes = []
+    values_c = []
+    for i, (tag_s, name_s, value_s) in enumerate(attributes):
+        if name_s is not None:
+            if values_c:
+                combined_attributes.append((tag_c, name_c, values_c))
+            tag_c = tag_s
+            name_c = name_s
+            values_c = [value_s]
+        else:
+            # assert False, (i, tag_s, name_s, value_s, values_c)
+            values_c.append(value_s)
+
+    if values_c:
+        combined_attributes.append((tag_c, name_c, values_c))
+
+    return combined_attributes
 
 
 def parse_group(ipp):
     """Parse an attribute group
+
+        https://tools.ietf.org/html/draft-sweet-rfc2910bis-07
+        Internet Printing Protocol/1.1: Encoding and Transport
 
         3.1.2 Attribute Group
 
@@ -531,13 +564,33 @@ def parse_group(ipp):
         |                   attribute                 |  p bytes |- 0 or more
         ----------------------------------------------------------
     """
+    from collections import OrderedDict
+    attribute_dict = OrderedDict()
     tag = ipp.read_tag()
     while tag is not None:
         print()
-        print('\ttag=0x%02x %s' % (tag, TAG_NAME.get(tag, 'UNKNOWN')))
+        tag_s = TAG_NAME.get(tag, 'UNKNOWN')
+        print('\ttag=0x%02x %s' % (tag, tag_s))
         assert tag in GROUP_TAGS, tag
-        tag = parse_attr_1val(ipp)
-    return tag
+        tag, attributes = parse_attr_1val(ipp)
+        combined_attributes = combine_attribute_values(attributes)
+        attribute_dict[tag_s] = combined_attributes
+
+    return attribute_dict
+
+
+def save_attribute_dict(attribute_dict):
+    import csv
+    with open('eggs.csv', 'w') as f:
+        w = csv.writer(f)
+        w.writerow(['group_tag', 'tag_name', 'name', 'value'])
+        for group_tag, attributes in attribute_dict.items():
+            for tag_name, name, value in attributes:
+                value_s = '' if value is None else value
+                if len(value_s) > 1:
+                    print('$$$$$$$$')
+                print('^^^', [group_tag, tag_name, len(value_s), name, value_s])
+                w.writerow([group_tag, tag_name, name, value_s])
 
 
 def parse_body(ipp, parent):
@@ -553,7 +606,10 @@ def parse_body(ipp, parent):
                   }
     print('HEADER', ipp.header)
 
-    parse_group(ipp)
+    attribute_dict = parse_group(ipp)
+    save_attribute_dict(attribute_dict)
+    # print('-' * 80)
+    # pprint(attribute_dict)
 
         # print('!!# tag=0x%02x %s' % (tag, TAG_NAME.get(tag, 'UNKNOWN')))
 
