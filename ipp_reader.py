@@ -26,6 +26,8 @@
 """
 from __future__ import division, print_function
 import sys
+import os
+import csv
 from pprint import pprint
 
 
@@ -87,6 +89,18 @@ assert len(TAG_DICT.values()) == len(set(TAG_DICT.values()))
 TAG_NAME = {v: k for k, v in TAG_DICT.items()}
 
 
+def recursive_glob(path):
+    """Like glob.glob() except that it sorts directories and
+        recurses through subdirectories.
+    """
+    if not os.path.isdir(path):
+        return path
+    for root, _, files in os.walk(path):
+        for filename in files:
+            if not filename.startswith('.'):
+                yield(os.path.join(root, filename))
+
+
 def T(text):
     return ''.join(chr(x) for x in text)
 
@@ -95,6 +109,12 @@ def H(text, n=None):
     if n is not None:
         text = text[:n]
     return ','.join(['%02x' % x for x in text])
+
+
+def R(obj):
+    if isinstance(obj, tuple):
+        return list(obj)
+    return obj
 
 
 def be2(text):
@@ -523,7 +543,13 @@ def parse_attr_1val(ipp):
             print('\t\t    name="%s"' % name_s)
         if value is not None:
             value_s = decode_value(tag, value)
-            print('\t\t    value=%r' % value_s)
+            try:
+                print('\t\t    value=%r' % R(value_s))
+            except Exception as e:
+                print('^' * 80)
+                print(type(value_s), len(value_s), str(value_s), value_s)
+                print('e="%s"' % e)
+                raise
         # assert (tag == IPP_TAG_NOVALUE) == (v == 0), (tag_s, name_s, value_s)
         attributes.append((tag_s, name_s, value_s))
 
@@ -576,24 +602,37 @@ def parse_group(ipp):
         combined_attributes = combine_attribute_values(attributes)
         attribute_dict[tag_s] = combined_attributes
 
+    assert attribute_dict
     return attribute_dict
 
 
-def save_attribute_dict(attribute_dict):
-    import csv
-    with open('eggs.csv', 'w') as f:
+RESULTS = 'results.tables'
+
+
+def save_attribute_dict(path_in, attribute_dict):
+
+    path = os.path.join(RESULTS, '%s.csv' % path_in)
+    assert path != path_in
+    # assert not os.path.exists(path), path
+    dir_name = os.path.dirname(path)
+    try:
+        os.makedirs(dir_name)
+    except FileExistsError:
+        pass
+
+    with open(path, 'w') as f:
         w = csv.writer(f)
         w.writerow(['group_tag', 'tag_name', 'name', 'value'])
         for group_tag, attributes in attribute_dict.items():
-            for tag_name, name, value in attributes:
-                value_s = '' if value is None else value
-                if len(value_s) > 1:
+            for tag_name, name, values in attributes:
+                # value_s = '' if value is None else value
+                if len(values) > 1:
                     print('$$$$$$$$')
-                print('^^^', [group_tag, tag_name, len(value_s), name, value_s])
-                w.writerow([group_tag, tag_name, name, value_s])
+                print('^^^', [group_tag, tag_name, len(values), name] + values)
+                w.writerow([group_tag, tag_name, name] + values)
 
 
-def parse_body(ipp, parent):
+def parse_body(path, ipp, parent):
     """Based on ipp.c: ippReadIO()
         ipp: IPP data
         parent: parent request, if any
@@ -607,59 +646,7 @@ def parse_body(ipp, parent):
     print('HEADER', ipp.header)
 
     attribute_dict = parse_group(ipp)
-    save_attribute_dict(attribute_dict)
-    # print('-' * 80)
-    # pprint(attribute_dict)
-
-        # print('!!# tag=0x%02x %s' % (tag, TAG_NAME.get(tag, 'UNKNOWN')))
-
-        # assert tag in GROUP_TAGS, tag
-        # assert False
-        # if tag == IPP_TAG_EXTENSION:
-        #     tag = be4(ipp.read(4))
-        #     # Fail if the high bit is set in the tag...
-        #     assert not (tag & IPP_TAG_CUPS_CONST), tag
-        # if tag == IPP_TAG_END:
-        #     break
-        # elif tag < IPP_TAG_UNSUPPORTED_VALUE:
-        #     # Group tag...  Set the current group and continue...
-        #     continue
-
-        # # Get the name
-        # n = be2(ipp.read(2))
-        # print('!!! n=%d' % n)
-
-        # if n == 0 and tag not in (IPP_TAG_MEMBERNAME,
-        #                           IPP_TAG_END_COLLECTION):
-        #     # More values for current attribute...
-        #     # !@#$ implement later
-        #     assert False, (tag, n)
-
-        # elif tag == IPP_TAG_MEMBERNAME:
-        #     # Name must be length 0!
-        #     assert n == 0, (tag, n)
-
-        #     if ipp.current:
-        #         ipp.prev = ipp.current
-
-        #     attr = ipp.current = ipp.add_attr(0, ipp.curtag, IPP_TAG_ZERO, 1)
-        #     assert attr, (tag)
-        #     value = attr.values
-
-        # elif tag != IPP_TAG_END_COLLECTION:
-        #     # New attribute; read the name and add it...
-        #     s = ipp.read(n)
-
-        #     attr = ipp.add_attr(s, ipp.curtag, tag, 1)
-        #     assert attr, (tag)
-        #     value = attr.values
-
-        # else:
-        #     attr = None
-        #     value = None
-
-        # n = be2(ipp.read(2))
-        # assert n < IPP_BUF_SIZE, (tag, n)
+    save_attribute_dict(path, attribute_dict)
 
 
 def dump(text):
@@ -692,10 +679,9 @@ def dump(text):
     assert False
 
 
-def main():
-
-    assert len(sys.argv) > 1, 'Usage: %s <control file>' % sys.argv[1]
-    path = sys.argv[1]
+def process_file(path):
+    print('#' * 80)
+    print(path)
 
     with open(path, 'rb') as f:
         text = f.read()
@@ -717,6 +703,16 @@ def main():
 
     ipp = IPP(text)
 
-    parse_body(ipp, None)
+    parse_body(path, ipp, None)
+    print('+' * 80)
+
+
+def main():
+
+    assert len(sys.argv) > 1, 'Usage: %s <control file>' % sys.argv[1]
+    dir_name = sys.argv[1]
+
+    for path in recursive_glob(dir_name):
+        process_file(path)
 
 main()
