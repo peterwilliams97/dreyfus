@@ -28,6 +28,7 @@ from __future__ import division, print_function
 import sys
 import os
 import csv
+from datetime import datetime
 from pprint import pprint
 
 
@@ -89,16 +90,24 @@ assert len(TAG_DICT.values()) == len(set(TAG_DICT.values()))
 TAG_NAME = {v: k for k, v in TAG_DICT.items()}
 
 
+DEBUG = False
+
+
+def dprint(msg):
+    if DEBUG:
+        print(msg)
+
 def recursive_glob(path):
-    """Like glob.glob() except that it sorts directories and
-        recurses through subdirectories.
+    """Generator that returns all files in directory `path` if path is a directory, or path itself
+        if path is not a directory.
     """
     if not os.path.isdir(path):
-        return path
-    for root, _, files in os.walk(path):
-        for filename in files:
-            if not filename.startswith('.'):
-                yield(os.path.join(root, filename))
+        yield path
+    else:
+        for root, _, files in os.walk(path):
+            for filename in files:
+                if not filename.startswith('.'):
+                    yield(os.path.join(root, filename))
 
 
 def T(text):
@@ -125,36 +134,6 @@ def be4(text):
     return (((((text[0] << 8) | text[1]) << 8) | text[2]) << 8) | text[3]
 
 
-class Value:    #     /**** Attribute Value ****/
-
-    def __init__(self):
-        self.integer = 0         # Integer/enumerated value
-        self.boolean = False     # Boolean value
-        self.date = [0] * 11     # Date/time value
-        self.resolution = (0, 0, '\0')  # Hor, vert, units
-        self.rnge = (0, 0)       # lower, upper
-        self.text = ('', '')     # language, text
-        self.unknown = (0, [])   # length, data
-        self.collection = None   # IPP
-
-
-class Attribute:
-    def __init__(self,
-                 next=None,       # Next attribute in list
-                 group_tag=None,   # ipp_tag_t Job/Printer/Operation group tag
-                 value_tag=IPP_TAG_ZERO,      # What type of value is it?
-                 name='',          # Name of attribute
-                 num_values=0,     # Number of values
-                 values=None   # Values
-                 ):
-        self.next = next        # Next attribute in list
-        self.group_tag = group_tag   # ipp_tag_t Job/Printer/Operation group tag
-        self.value_tag = value_tag      # What type of value is it?
-        self.name = name          # Name of attribute
-        self.num_values = 0     # Number of values
-        self.values = values    # [IPP()]   # Values
-
-
 class IPP:
 
     def __init__(ipp, text):
@@ -172,8 +151,7 @@ class IPP:
         assert ipp.i + n <= len(ipp.text)
         assert ipp.i < len(ipp.text)
         if ipp.i + n >= len(ipp.text):
-            print('$$$$$')
-            # assert False
+            dprint('Done reading IPP')
             return None
         bytes = ipp.text[ipp.i:ipp.i + n]
         ipp.i += n
@@ -186,133 +164,13 @@ class IPP:
             return None
         assert bytes
         # print('@@@', type(bytes), len(bytes))
+        # We don't see end-of-attributes tags in CUPS control files
+        assert bytes[0] != IPP_TAG_END
         return bytes[0]
-
-    # Add a new attribute to the message.
-    def add_attr(ipp,
-                 name,          # Attribute name or NULL
-                 group_tag,     # Group tag or IPP_TAG_ZERO
-                 value_tag,     # Value tag or IPP_TAG_ZERO
-                 num_values):   # Number of values
-
-        assert ipp and num_values >= 0
-
-        attr = Attribute(name=name,
-                         group_tag=group_tag,
-                         value_tag=value_tag,
-                         num_values=num_values)
-
-        # Add it to the end of the linked list...
-        ipp.attrs.append(attr)
-
-        return attr
-
-
-# def decode_val(ipp, attr, tag, n):
-#     value = {}
-
-#     if tag in (IPP_TAG_INTEGER, IPP_TAG_ENUM):
-#         assert n == 4, (tag, n)
-#         n = be4(ipp.read(4))
-
-#         if attr.value_tag == IPP_TAG_RANGE:
-#             value['range_lower'] = value['range_upper'] = n
-#         else:
-#             value['integer'] = n
-
-#     elif tag == IPP_TAG_BOOLEAN:
-#         assert n == 1, (tag, n)
-#         value['boolean'] = bool(ipp.read(1))
-
-#     elif tag in (IPP_TAG_NOVALUE,
-#                  IPP_TAG_NOTSETTABLE,
-#                  IPP_TAG_DELETEATTR,
-#                  IPP_TAG_ADMINDEFINE):
-
-#         # These value types are not supposed to have values, however
-#         # some vendors (Brother) do not implement IPP correctly and so
-#         # we need to map non-empty values to text...
-
-#         if value.tag == tag:
-#             if n == 0:
-#                 return
-#             # !@#$ has no effect
-#             attr.value_tag = IPP_TAG_TEXT
-
-#     if tag in (IPP_TAG_TEXT,
-#                IPP_TAG_NAME,
-#                IPP_TAG_KEYWORD,
-#                IPP_TAG_URI,
-#                IPP_TAG_URISCHEME,
-#                IPP_TAG_CHARSET,
-#                IPP_TAG_LANGUAGE,
-#                IPP_TAG_MIMETYPE):
-#         value['string.text'] = ipp.read(n)
-
-#     elif tag == IPP_TAG_DATE:
-#         assert n == 11, (tag, n)
-#         value['date'] = ipp.read(n)
-
-#     elif tag == IPP_TAG_RESOLUTION:
-#         assert n == 9, (tag, n)
-#         s = ipp.read(n)
-#         value['resolution.xres'] = be4(s)
-#         value['resolution.yres'] = be4(s[4:])
-#         value['resolution.units'] = s[8]
-
-#     elif tag == IPP_TAG_RANGE:
-#         assert n == 8, (tag, n)
-#         s = ipp.read(n)
-#         value['range.lower'] = be4(s)
-#         value['range.upper'] = be4(s[4:])
-
-#     elif tag in (IPP_TAG_TEXTLANG,
-#                  IPP_TAG_NAMELANG):
-#         assert n >= 4, (tag, n)
-
-#         buf = ipp.read(n)
-#         s = buf
-
-#         # text-with-language and name-with-language are composite values:
-#         #     language-length
-#         #     language
-#         #     text-length
-#         #     text
-
-#         n = be2[s]
-#         value['string.language'] = s[2:2 + n]
-
-#         s = buf[2 + n:]
-#         n = be2(s)
-#         value['string.text'] = s[2:2 + n]
-
-#     elif tag == IPP_TAG_BEGIN_COLLECTION:
-#         # Oh, boy, here comes a collection value, so read it...
-
-#         value['collection'] = None
-#         assert n == 0, (tag, n)
-
-#     elif tag == IPP_TAG_END_COLLECTION:
-
-#         return state == IPP_STATE_DATA
-
-#     elif tag == IPP_TAG_MEMBERNAME:
-#         # The value the name of the member in the collection, which
-#         # we need to carry over...
-#         assert attr, (tag, n)
-#         assert n, (tag, n)
-
-#         attr['name'] = text[:n]
-#         attr['num_values'] -= 1
-
-#     else:  # Other unsupported values
-#         pass
-
-#     return value
 
 
 def decode_datetime(value):
-    """
+    """https://tools.ietf.org/html/rfc1903
         DateAndTime ::= TEXTUAL-CONVENTION
         DISPLAY-HINT "2d-1d-1d,1d:1d:1d.1d,1a1d:1d"
         STATUS       current
@@ -332,7 +190,6 @@ def decode_datetime(value):
                   8       9    direction from UTC        '+' / '-'
                   9      10    hours from UTC            0..11
     """
-    from datetime import datetime
     year = be2(value[:2])
     month = value[2]
     day = value[3]
@@ -356,12 +213,12 @@ def decode_value(tag, value):
         Tag Value (Hex)  Meaning
 
         0x10             unsupported
-        0x11             reserved for 'default' for definition in a future IETF standards track document
+        0x11             reserved for 'default' for definition in a future IETF standards
         0x12             unknown
         0x13             no-value
-        0x14-0x1F        reserved for "out-of-band" values in future IETF standards track documents.
+        0x14-0x1F        reserved for "out-of-band" values in future IETF standards
 
-        The following table specifies the integer values for the "value-tag"  field:
+        The following table specifies the integer values for the "value-tag" field:
 
         Tag Value (Hex)   Meaning
 
@@ -386,7 +243,7 @@ def decode_value(tag, value):
         0x34              reserved for definition in a future IETF standards track document
         0x35              textWithLanguage
         0x36              nameWithLanguage
-        0x37-0x3F         reserved for octetString type definitions in future IETF standards track documents
+        0x37-0x3F         reserved for octetString type definitions in future IETF standards
 
         The following table specifies the character-string values for the "value-tag" field:
 
@@ -402,9 +259,9 @@ def decode_value(tag, value):
         0x47              charset
         0x48              naturalLanguage
         0x49              mimeMediaType
-        0x4A-0x5F         reserved for character string type definitions in future IETF standards track documents
+        0x4A-0x5F         reserved for character string type definitions in future IETF standards
 
-        NOTE: 0x40 is reserved for "generic character-string" if it should   ever be needed.
+        NOTE: 0x40 is reserved for "generic character-string" if it should ever be needed.
     """
     n = len(value)
 
@@ -537,14 +394,14 @@ def parse_attr_1val(ipp):
         value = None if v == 0 else ipp.read(v)
         tag_s = TAG_NAME.get(tag, 'UNKNOWN')
         name_s = value_s = None
-        print('\t\ttag=0x%02x %s n=%d,v=%d' % (tag, tag_s, n, v))
+        dprint('\t\ttag=0x%02x %s n=%d,v=%d' % (tag, tag_s, n, v))
         if name is not None:
             name_s = T(name)
-            print('\t\t    name="%s"' % name_s)
+            dprint('\t\t    name="%s"' % name_s)
         if value is not None:
             value_s = decode_value(tag, value)
             try:
-                print('\t\t    value=%r' % R(value_s))
+                dprint('\t\t    value=%r' % R(value_s))
             except Exception as e:
                 print('^' * 80)
                 print(type(value_s), len(value_s), str(value_s), value_s)
@@ -594,9 +451,9 @@ def parse_group(ipp):
     attribute_dict = OrderedDict()
     tag = ipp.read_tag()
     while tag is not None:
-        print()
+        dprint('')
         tag_s = TAG_NAME.get(tag, 'UNKNOWN')
-        print('\ttag=0x%02x %s' % (tag, tag_s))
+        dprint('\ttag=0x%02x %s' % (tag, tag_s))
         assert tag in GROUP_TAGS, tag
         tag, attributes = parse_attr_1val(ipp)
         combined_attributes = combine_attribute_values(attributes)
@@ -625,10 +482,7 @@ def save_attribute_dict(path_in, attribute_dict):
         w.writerow(['group_tag', 'tag_name', 'name', 'value'])
         for group_tag, attributes in attribute_dict.items():
             for tag_name, name, values in attributes:
-                # value_s = '' if value is None else value
-                if len(values) > 1:
-                    print('$$$$$$$$')
-                print('^^^', [group_tag, tag_name, len(values), name] + values)
+                print([name] + values, [len(values), tag_name, group_tag])
                 w.writerow([group_tag, tag_name, name] + values)
 
 
@@ -681,30 +535,29 @@ def dump(text):
 
 def process_file(path):
     print('#' * 80)
-    print(path)
+    print(path, os.path.getsize(path))
 
     with open(path, 'rb') as f:
         text = f.read()
 
     t0 = text[0]
-    print('type=%s,val=%s' % (type(t0), t0))
+    dprint('type=%s,val=%s' % (type(t0), t0))
     assert all(isinstance(c, int) for c in text)
     text = [int(c) for c in text]
     # dump(text)
 
-    version = text[:2]
-    op_status = be2(text[2:])
-    request_id = be4(text[4:])
+    # version = text[:2]
+    # op_status = be2(text[2:])
+    # request_id = be4(text[4:])
 
     print('path: %s' % path)
-    print('version: %s' % version)
-    print('op_status: %d' % op_status)
-    print('request_id: %d' % request_id)
+    # print('version: %s' % version)
+    # print('op_status: %d' % op_status)
+    # print('request_id: %d' % request_id)
 
     ipp = IPP(text)
 
     parse_body(path, ipp, None)
-    print('+' * 80)
 
 
 def main():
