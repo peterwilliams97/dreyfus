@@ -4,21 +4,21 @@ https://tools.ietf.org/html/draft-sweet-rfc2910bis-07
 
    An operation request or response is encoded as follows:
 
-   -----------------------------------------------
-   |                  version-number             |   2 bytes  - required
-   -----------------------------------------------
-   |               operation-id (request)        |
-   |                      or                     |   2 bytes  - required
-   |               status-code (response)        |
-   -----------------------------------------------
-   |                   request-id                |   4 bytes  - required
-   -----------------------------------------------
-   |                 attribute-group             |   n bytes - 0 or more
-   -----------------------------------------------
-   |              end-of-attributes-tag          |   1 byte   - required
-   -----------------------------------------------
-   |                     data                    |   q bytes  - optional
-   -----------------------------------------------
+      -----------------------------------------------
+      |                  version-number             |   2 bytes  - required
+      -----------------------------------------------
+      |               operation-id (request)        |
+      |                      or                     |   2 bytes  - required
+      |               status-code (response)        |
+      -----------------------------------------------
+      |                   request-id                |   4 bytes  - required
+      -----------------------------------------------
+      |                 attribute-group             |   n bytes - 0 or more
+      -----------------------------------------------
+      |              end-of-attributes-tag          |   1 byte   - required
+      -----------------------------------------------
+      |                     data                    |   q bytes  - optional
+      -----------------------------------------------
 
 
    http://tools.ietf.org/html/rfc2567#section-5.2
