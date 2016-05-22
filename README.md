@@ -1,5 +1,5 @@
-# An Artillery Officer Falsely Accused of IPP Development
+# An Artillery Officer Falsely Accused of IPP
 
 
 ## UPSDD
-**U**nderstand the __P__roblem you are __trying__ to __S__olve __D__riven __D__evelopment
+**U**nderstand the **P**roblem you are trying to **S**olve **D**riven **D**evelopment
