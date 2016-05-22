@@ -1,4 +1,6 @@
-https://tools.ietf.org/html/draft-sweet-rfc2910bis-07
+#Snippets from standards
+
+(https://tools.ietf.org/html/draft-sweet-rfc2910bis-07)
 
 3.1.1.  Request and Response
 
@@ -21,7 +23,7 @@ https://tools.ietf.org/html/draft-sweet-rfc2910bis-07
       -----------------------------------------------
 
 
-   http://tools.ietf.org/html/rfc2567#section-5.2
+   (http://tools.ietf.org/html/rfc2567#section-5.2)
 
    The protocol must handle overrun conditions in the printer and must
    support overlapped printing and downloading of the file in devices
@@ -109,7 +111,7 @@ http://tools.ietf.org/html/rfc2911
 
 RFC 2911              IPP/1.1: Model and Semantics        September 2000
 
-_Fan out_ is a print server.
+*Fan out* is a print server.
 
 
       embedded printer:
