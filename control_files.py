@@ -11,6 +11,9 @@ from collections import OrderedDict, defaultdict
 from pprint import pprint
 
 
+DEBUG = False
+
+
 def read_file(path):
     with open(path, 'rb') as f:
         return f.read()
@@ -18,15 +21,16 @@ def read_file(path):
 
 def split_all(path):
     parts = []
-    d = path
+    d0 = path
     for _ in range(20):
-        d, name = os.path.split(d)
+        d, name = os.path.split(d0)
         # print('@@@', d, name)
-        if not name:
+        if name:
+            parts.append(name)
+        if not d or d == d0:
             break
-        parts.append(name)
-        if not d:
-            break
+        d0 = d
+    assert parts, path
     parts.reverse()
 
     # print('##')
@@ -43,6 +47,7 @@ def get_issue(parts):
     for p in parts:
         if RE_ISSSUE.match(p):
             return p
+    assert False, parts
     return None
 
 
@@ -59,7 +64,8 @@ def recursive_glob(dir_name, mask):
     # assert False
     # out = []
     for i, (root, dirs, files) in enumerate(recursive_list):
-        print('root=%d:%d:%s' % (i, len(files), root))
+        if DEBUG:
+            print('root=%d:%d:%s' % (i, len(files), root))
         path_list = [path for path in files if RE_MASK.search(path)]
         # print('!%d,' % len(path_list), end='')
         path_list.sort(key=lambda s: (s.lower(), s))
@@ -73,7 +79,7 @@ def recursive_glob(dir_name, mask):
             if issue is None and parts:
                 issue = parts[-1]
             if issue is None:
-                print('*** no issue: %s' % path)
+                print('*** no issue: %s' % full_path)
                 continue
             print('!!!', full_path)
             print('   ', parts, filename)
@@ -132,7 +138,7 @@ def mkdir(path):
     try:
         os.mkdir(path)
     except Exception as e:
-        print('mkdir', path, e)
+        print('mkdir : path="%s",e=%r=%s' % (path, e, e))
 
 CONTROL = 'control.files'
 
@@ -143,7 +149,7 @@ def find_control_files(root):
     print('mask=%s' % mask)
     path_dict = glob(root, mask)
     print('@' * 80)
-    lengths = [len(text) for _, _ , _ , text in path_dict.values()]
+    lengths = [len(text) for _, _, _, text in path_dict.values()]
     print('%d files,min=%d,max=%d' % (len(path_dict), min(lengths), max(lengths)))
     # for i, (path, (issue, j, filename, text)) in enumerate(path_dict.items()):
     #     print('%4d: %5d %s %s' % (i, len(text), [issue, j, filename], path))
@@ -158,7 +164,8 @@ def find_control_files(root):
         try:
             shutil.copy(path, dest_path)
         except Exception as e:
-            print('==> copy %s failed %s' % (path, e))
+            print('==> copy "%s"->"%s" failed %r' % (path, dest_path, e))
+            raise
 
 
 if __name__ == '__main__':

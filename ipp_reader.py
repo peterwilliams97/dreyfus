@@ -29,6 +29,7 @@ import sys
 import os
 import csv
 from datetime import datetime
+from collections import defaultdict
 from pprint import pprint
 
 
@@ -52,33 +53,33 @@ IPP_TAG_DEFAULT = 0x11          # Default value
 IPP_TAG_UNKNOWN = 0x12          # Unknown value
 IPP_TAG_NOVALUE = 0x13          # No-value value
 
-IPP_TAG_NOTSETTABLE = 0x15       # Not-settable value
-IPP_TAG_DELETEATTR = 0x16           # Delete-attribute value
-IPP_TAG_ADMINDEFINE = 0x17          # Admin-defined value
+IPP_TAG_NOTSETTABLE = 0x15      # Not-settable value
+IPP_TAG_DELETEATTR = 0x16       # Delete-attribute value
+IPP_TAG_ADMINDEFINE = 0x17      # Admin-defined value
 
-IPP_TAG_INTEGER = 0x21       # Integer value
+IPP_TAG_INTEGER = 0x21          # Integer value
 IPP_TAG_BOOLEAN = 0x22          # Boolean value
 IPP_TAG_ENUM = 0x23             # Enumeration value
 
-IPP_TAG_STRING = 0x30        # Octet string value
+IPP_TAG_STRING = 0x30           # Octet string value
 IPP_TAG_DATE = 0x31             # Date/time value
-IPP_TAG_RESOLUTION = 0x32           # Resolution value
+IPP_TAG_RESOLUTION = 0x32       # Resolution value
 IPP_TAG_RANGE = 0x33            # Range value
-IPP_TAG_BEGIN_COLLECTION = 0x34     # Beginning of collection value
+IPP_TAG_BEGIN_COLLECTION = 0x34 # Beginning of collection value
 IPP_TAG_TEXTLANG = 0x35         # Text-with-language value
 IPP_TAG_NAMELANG = 0x36         # Name-with-language value
-IPP_TAG_END_COLLECTION = 0x37       # End of collection value
+IPP_TAG_END_COLLECTION = 0x37   # End of collection value
 
-IPP_TAG_TEXT = 0x41          # Text value
+IPP_TAG_TEXT = 0x41             # Text value
 IPP_TAG_NAME = 0x42             # Name value
-IPP_TAG_RESERVED_STRING = 0x43      # Reserved for future string value @private@
+IPP_TAG_RESERVED_STRING = 0x43  # Reserved for future string value @private@
 IPP_TAG_KEYWORD = 0x44          # Keyword value
-IPP_TAG_URI = 0x45             # URI value
-IPP_TAG_URISCHEME = 0x46            # URI scheme value
+IPP_TAG_URI = 0x45              # URI value
+IPP_TAG_URISCHEME = 0x46        # URI scheme value
 IPP_TAG_CHARSET = 0x47          # Character set value
-IPP_TAG_LANGUAGE = 0x48        # Language value
+IPP_TAG_LANGUAGE = 0x48         # Language value
 IPP_TAG_MIMETYPE = 0x49         # MIME media type value
-IPP_TAG_MEMBERNAME = 0x4A           # Collection member name value
+IPP_TAG_MEMBERNAME = 0x4A       # Collection member name value
 
 IPP_TAG_EXTENSION = 0x7f     # Extension point for 32-bit tags
 IPP_TAG_CUPS_MASK = 0x7fffffff,   # Mask for copied attribute values @private@
@@ -96,6 +97,7 @@ DEBUG = False
 def dprint(msg):
     if DEBUG:
         print(msg)
+
 
 def recursive_glob(path):
     """Generator that returns all files in directory `path` if path is a directory, or path itself
@@ -320,6 +322,8 @@ def decode_value(tag, value):
                  IPP_TAG_NAMELANG):
         assert n >= 4, (tag, n)
 
+        assert False
+
         buf = ipp.read(n)
         s = buf
 
@@ -501,6 +505,7 @@ def parse_body(path, ipp, parent):
 
     attribute_dict = parse_group(ipp)
     save_attribute_dict(path, attribute_dict)
+    return attribute_dict
 
 
 def dump(text):
@@ -557,7 +562,7 @@ def process_file(path):
 
     ipp = IPP(text)
 
-    parse_body(path, ipp, None)
+    return parse_body(path, ipp, None)
 
 
 def main():
@@ -565,7 +570,31 @@ def main():
     assert len(sys.argv) > 1, 'Usage: %s <control file>' % sys.argv[1]
     dir_name = sys.argv[1]
 
+    path_attributes = {}
+    bad_paths = {}
     for path in recursive_glob(dir_name):
-        process_file(path)
+        try:
+            path_attributes[path] = process_file(path)
+        except Exception as e:
+            bad_paths[path] = e
+            raise
+
+    print('$' * 80)
+    pprint(bad_paths)
+    print('%' * 80)
+    name_vals = defaultdict(set)
+    for attr_val in path_attributes.values():
+        for _, attributes in attr_val.items():
+            for tag_name, name, values in attributes:
+                for val in values:
+                    if isinstance(val, str) and len(val) > 20:
+                        continue
+                    name_vals[name].add(val)
+
+    for key in sorted(name_vals, key=lambda k: (len(name_vals[k]), k)):
+        vals = name_vals[key]
+        if len(vals) > 20 or len(vals) <= 1:
+            continue
+        print(key, list(vals))
 
 main()
