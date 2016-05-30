@@ -115,7 +115,7 @@ assert len(TAG_DICT.values()) == len(set(TAG_DICT.values()))
 TAG_NAME = {v: k for k, v in TAG_DICT.items()}
 
 
-DEBUG = True
+DEBUG = False
 
 
 def tag_name(tag):
@@ -207,7 +207,7 @@ class IPP:
         assert tag != IPP_TAG_END
         assert tag in TAG_NAME, tag
         op = 'r' if is_read else 'p'
-        print('!@@%s: %s i=%d' % (op, tag_describe(tag), ipp.i))
+        dprint('!@@%s: %s i=%d' % (op, tag_describe(tag), ipp.i))
         ipp.i_tag = ipp.i
         return tag
 
@@ -323,7 +323,7 @@ def parse_value(ipp, depth, tag, value):
     """
     n = len(value) if value is not None else None
     assert isinstance(depth, int), depth
-    print('parse_value: d=%d,i=%d,tag=%s' % (depth, ipp.i_tag, tag_describe(tag)))
+    dprint('parse_value: d=%d,i=%d,tag=%s' % (depth, ipp.i_tag, tag_describe(tag)))
 
     if tag in (IPP_TAG_INTEGER, IPP_TAG_ENUM):
         assert n == 4, (tag, n)
@@ -457,8 +457,9 @@ def parse_group(ipp, depth, name=None):
         |                     value                   |   v bytes
         -----------------------------------------------
     """
-    print('----- parse_group ---- depth=%d' % depth)
-    group = OrderedDict()
+    dprint('----- parse_group ---- depth=%d' % depth)
+    # group = OrderedDict()
+    group = {}
     tag = None  # if depth == 0 else IPP_TAG_BEGIN_COLLECTION
     name = None
     # values = []
@@ -532,8 +533,9 @@ def parse_group(ipp, depth, name=None):
                 assert isinstance(name0, str), (i, (tag0, name0, value0))
             i += 1
 
-    print('truples=%d' % len(truples))
-    print('truples2=%d' % len(truples2))
+    if len(truples2) != len(truples):
+        print('truples=%d' % len(truples))
+        print('truples2=%d' % len(truples2))
 
     truples = truples2
     for i, (tag, name, value) in enumerate(truples):
@@ -558,11 +560,13 @@ def parse_group(ipp, depth, name=None):
         if accumulating:
             assert tag == tag0
         else:
-            group[name] = tag, value
+            # group[name] = tag, value
+            group[name] = value
         i += 1
 
     if accumulating and values:
-        group[name0] = tag0, values
+        # group[name0] = tag0, values
+        group[name0] = values
 
     assert isinstance(group, dict), type(group)
     assert cnt
@@ -574,7 +578,8 @@ def parse_top(ipp):
     """Parse the whole IPP packet
         Returns: dict of top level groups
     """
-    top = OrderedDict()
+    # top = OrderedDict()
+    top = {}
     while True:
         tag = ipp.read_tag()
         if tag is None:
@@ -603,10 +608,13 @@ def save_attribute_dict(path_in, attribute_dict):
         w = csv.writer(f)
         w.writerow(['group_tag', 'tag_name', 'name', 'value'])
         for group_tag, attributes in attribute_dict.items():
-            print('attributes=%s' % attributes)
-            for name, (tag, value) in attributes.items():
-                print('!@#', tag_name(group_tag), tag_name(tag), type(value), name, value)
-                w.writerow([group_tag, name, tag, value])
+            dprint('attributes=%s' % attributes)
+            # for name, (tag, value) in attributes.items():
+            for name, value in attributes.items():
+                # print('!@#', tag_name(group_tag), tag_name(tag), type(value), name, value)
+                # w.writerow([group_tag, name, tag, value])
+                dprint(('!@#', tag_name(group_tag), type(value), name, value))
+                w.writerow([group_tag, name, value])
 
 
 def parse_body(path, ipp, parent):
@@ -695,6 +703,10 @@ def main():
     for path in recursive_glob(dir_name):
         try:
             path_attributes[path] = process_file(path)
+            print('=' * 80)
+            print(path)
+            pprint(path_attributes[path])
+            print('`' * 80)
         except Exception as e:
             bad_paths[path] = e
             print('bad path="%s"' % path)
@@ -706,12 +718,24 @@ def main():
     name_vals = defaultdict(set)
     for attribute_dict in path_attributes.values():
         for _, attributes in attribute_dict.items():
-            for name, (tag, value) in attributes.items():
+            # for name, (tag, value) in attributes.items():
+            for name, value in attributes.items():
+                assert isinstance(name, str), name
                 values = value if isinstance(value, list) else [value]
                 for val in values:
                     if isinstance(val, str) and len(val) > 20:
                         continue
-                    name_vals[name].add(val)
+                    if isinstance(val, (dict, list)):
+                        continue
+                    if isinstance(val, dict):
+                        continue
+                    if isinstance(val, list):
+                        continue
+                    try:
+                        name_vals[name].add(val)
+                    except:
+                        print('$$', val)
+                        # sraise
 
     for key in sorted(name_vals, key=lambda k: (len(name_vals[k]), k)):
         vals = name_vals[key]
