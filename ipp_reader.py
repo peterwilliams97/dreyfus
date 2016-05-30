@@ -23,13 +23,37 @@
        |                     data                    |   q bytes  - optional
        -----------------------------------------------
 
+
+
+    IPP objects contain
+        - base types (1-values)
+        - lists (continuations) containing a single type
+        - dicts (groups)
+
+    We represent an IPP object as dict of objects where each object can be one of the IPP object
+    types
+
+    e.g. ipp_object = {
+        'a': true,
+        'b': 1,
+        'c': 'a string',
+        'd': [1, 2],
+        'e': {
+            'a': false,
+            'b': 2,
+            ...
+        }
+
+    }
+
+
 """
 from __future__ import division, print_function
 import sys
 import os
 import csv
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from pprint import pprint
 
 
@@ -91,7 +115,17 @@ assert len(TAG_DICT.values()) == len(set(TAG_DICT.values()))
 TAG_NAME = {v: k for k, v in TAG_DICT.items()}
 
 
-DEBUG = False
+DEBUG = True
+
+
+def tag_name(tag):
+    return TAG_NAME.get(tag, 'UNKNOWN')
+
+
+def tag_describe(tag):
+    if tag is None:
+        return 'tag is None  WTF!!!'
+    return '0x%02x %s' % (tag, tag_name(tag))
 
 
 def dprint(msg):
@@ -141,34 +175,46 @@ class IPP:
     def __init__(ipp, text):
         ipp.text = text
         ipp.i = 0
+        ipp.i_tag = -1
         ipp.attrs = []
 
     def __repr__(self):
         return 'IPP{len=%d,i=%d}' % (len(self.text), self.i)
 
-    def read(ipp, n):
+    def peek(ipp, n, is_read=False):
         assert 0 <= ipp.i, (n, ipp.i, len(ipp.text))
         assert n > 0
-        # print('!!@ read %d %4d %2d %s' % (len(ipp.text), ipp.i, n, H(ipp.text[ipp.i:], min(n, 20))))
+        op = 'read' if is_read else 'peek'
+        dprint('    %s len=%d i=%4d n=%2d data=%s' %
+               (op, len(ipp.text), ipp.i, n, H(ipp.text[ipp.i:], min(n, 20))))
         assert ipp.i + n <= len(ipp.text)
         assert ipp.i < len(ipp.text)
         if ipp.i + n >= len(ipp.text):
             dprint('Done reading IPP')
             return None
-        bytes = ipp.text[ipp.i:ipp.i + n]
+        return ipp.text[ipp.i:ipp.i + n]
+
+    def read(ipp, n):
+        byts = ipp.peek(n, is_read=True)
         ipp.i += n
-        return bytes
+        return byts
+
+    def peek_tag(ipp, is_read=False):
+        byts = ipp.peek(1, is_read)
+        if byts is None:
+            return None
+        tag = byts[0]
+        assert tag != IPP_TAG_END
+        assert tag in TAG_NAME, tag
+        op = 'r' if is_read else 'p'
+        print('!@@%s: %s i=%d' % (op, tag_describe(tag), ipp.i))
+        ipp.i_tag = ipp.i
+        return tag
 
     def read_tag(ipp):
-        # print('!!!')
-        bytes = ipp.read(1)
-        if bytes is None:
-            return None
-        assert bytes
-        # print('@@@', type(bytes), len(bytes))
-        # We don't see end-of-attributes tags in CUPS control files
-        assert bytes[0] != IPP_TAG_END
-        return bytes[0]
+        tag = ipp.peek_tag(is_read=True)
+        ipp.i += 1
+        return tag
 
 
 def decode_datetime(value):
@@ -202,7 +248,18 @@ def decode_datetime(value):
     return str(datetime(year, month, day, hour, minute, second))
 
 
-def decode_value(tag, value):
+class Group(object):
+
+    def __init__(self, name, member_name, value):
+        self.name = name
+        self.member_name = member_name
+        self.value = value
+
+    def __repr__(self):
+        return 'Group(%s)' % self.__dict__
+
+
+def parse_value(ipp, depth, tag, value):
     """
         3.5.2 Value Tags
 
@@ -265,7 +322,9 @@ def decode_value(tag, value):
 
         NOTE: 0x40 is reserved for "generic character-string" if it should ever be needed.
     """
-    n = len(value)
+    n = len(value) if value is not None else None
+    assert isinstance(depth, int), depth
+    print('parse_value: d=%d,i=%d,tag=%s' % (depth, ipp.i_tag, tag_describe(tag)))
 
     if tag in (IPP_TAG_INTEGER, IPP_TAG_ENUM):
         assert n == 4, (tag, n)
@@ -310,13 +369,13 @@ def decode_value(tag, value):
         xres = be4(value[:4])
         yres = be4(value[4:8])
         units = value[8]
-        return xres, yres, units
+        return tuple((xres, yres, units))
 
     elif tag == IPP_TAG_RANGE:
         assert n == 8, (tag, n)
         lower = be4(value[:4])
         upper = be4(value[4:])
-        return lower, upper
+        return tuple((lower, upper))
 
     elif tag in (IPP_TAG_TEXTLANG,
                  IPP_TAG_NAMELANG):
@@ -341,9 +400,22 @@ def decode_value(tag, value):
         value['string.text'] = s[2:2 + n]
 
     elif tag == IPP_TAG_BEGIN_COLLECTION:
-        # Oh, boy, here comes a collection value, so read it...
+        # https://tools.ietf.org/html/rfc3382
 
-        value['collection'] = None
+        assert value is None, (value, T(value))
+
+        attr_name_tag = ipp.read_tag()
+        assert attr_name_tag == IPP_TAG_MEMBERNAME, (tag_describe(attr_name_tag))
+        print('@@4', tag_describe(attr_name_tag))
+        n = be2(ipp.read(2))
+        assert n == 0, n
+        v = be2(ipp.read(2))
+        print('@@6', v)
+        member_name = ipp.read(v)
+        print('!!!!!**', depth + 1, T(member_name))
+        # assert False
+        group_attributes = parse_group(ipp, depth + 1, member_name)
+        return Group(name, member_name, group_attributes)
         assert n == 0, (tag, n)
 
     elif tag == IPP_TAG_END_COLLECTION:
@@ -351,8 +423,7 @@ def decode_value(tag, value):
         return state == IPP_STATE_DATA
 
     elif tag == IPP_TAG_MEMBERNAME:
-        # The value the name of the member in the collection, which
-        # we need to carry over...
+        # Attaches to parent
         assert attr, (tag, n)
         assert n, (tag, n)
 
@@ -360,13 +431,18 @@ def decode_value(tag, value):
         attr['num_values'] -= 1
 
     else:  # Other unsupported values
+        assert False, 'Unsupported'
         pass
 
     return value
 
 
-def parse_attr_1val(ipp):
-    """Parse an attribute with one value
+def parse_group(ipp, depth, name=None):
+    """Parse an attribute group
+        Returns: tag, group
+            where
+                tag: last tag read, not part of group
+                group: attribute group
 
         https://tools.ietf.org/html/draft-sweet-rfc2910bis-07
         Internet Printing Protocol/1.1: Encoding and Transport
@@ -387,84 +463,78 @@ def parse_attr_1val(ipp):
         |                     value                   |   v bytes
         -----------------------------------------------
     """
-    attributes = []
+    print('----- parse_group ---- depth=%d' % depth)
+    group = OrderedDict()
+    tag = None  `# if depth == 0 else IPP_TAG_BEGIN_COLLECTION
+    name = None
+    values = []
+
+    def add_attribute(tag, name, values):
+        if name and values:
+            assert isinstance(name, str), name
+            value = values[0] if len(values) == 1 else values
+            group[name] = tag, value
+
+    for cnt in range(10 ** 6):
+        tag_new = ipp.peek_tag()
+        if tag_new is None or tag_new in GROUP_TAGS:
+            # assert False, (tag_describe(tag), cnt, ipp)
+            assert depth == 0, (depth, tag_describe(tag))
+            break
+
+        tag_new = ipp.read_tag()
+
+        if tag_new == IPP_TAG_END_COLLECTION:
+            print('### out of here', tag_describe(tag))
+            break
+
+        n = be2(ipp.read(2))
+        if n or tag_new == IPP_TAG_BEGIN_COLLECTION:
+            add_attribute(tag, name, values)
+            tag = tag_new
+            values = []
+            if n:
+                name = T(ipp.read(n))
+            else:
+                name = None
+
+        assert tag is not None, tag_describe(tag_new)
+
+        v = be2(ipp.read(2))
+        dprint('parse_group: d=%d,i=%d,tag=%s,name=%s,v=%d' %
+               (depth, ipp.i_tag, tag_describe(tag), name, v))
+
+        if v > 0:
+            value = parse_value(ipp, depth, tag, ipp.read(v))
+        elif tag == IPP_TAG_BEGIN_COLLECTION:
+            value = parse_value(ipp, depth, tag, None)
+        else:
+            value = None
+
+        dprint('  value=%s %s' % (repr(value), type(value)))
+        values.append(value)
+
+    add_attribute(tag, name, values)
+
+    assert isinstance(group, dict), type(group)
+    assert cnt
+    assert group, cnt
+    return group
+
+
+def parse_top(ipp):
+    """Parse the whole IPP packet
+        Returns: dict of top level groups
+    """
+    top = OrderedDict()
     while True:
         tag = ipp.read_tag()
-        if tag is None or tag in GROUP_TAGS:
-            return tag, attributes
-        n = be2(ipp.read(2))
-        name = None if n == 0 else ipp.read(n)
-        v = be2(ipp.read(2))
-        value = None if v == 0 else ipp.read(v)
-        tag_s = TAG_NAME.get(tag, 'UNKNOWN')
-        name_s = value_s = None
-        dprint('\t\ttag=0x%02x %s n=%d,v=%d' % (tag, tag_s, n, v))
-        if name is not None:
-            name_s = T(name)
-            dprint('\t\t    name="%s"' % name_s)
-        if value is not None:
-            value_s = decode_value(tag, value)
-            try:
-                dprint('\t\t    value=%r' % R(value_s))
-            except Exception as e:
-                print('^' * 80)
-                print(type(value_s), len(value_s), str(value_s), value_s)
-                print('e="%s"' % e)
-                raise
-        # assert (tag == IPP_TAG_NOVALUE) == (v == 0), (tag_s, name_s, value_s)
-        attributes.append((tag_s, name_s, value_s))
-
-
-def combine_attribute_values(attributes):
-    combined_attributes = []
-    values_c = []
-    for i, (tag_s, name_s, value_s) in enumerate(attributes):
-        if name_s is not None:
-            if values_c:
-                combined_attributes.append((tag_c, name_c, values_c))
-            tag_c = tag_s
-            name_c = name_s
-            values_c = [value_s]
-        else:
-            # assert False, (i, tag_s, name_s, value_s, values_c)
-            values_c.append(value_s)
-
-    if values_c:
-        combined_attributes.append((tag_c, name_c, values_c))
-
-    return combined_attributes
-
-
-def parse_group(ipp):
-    """Parse an attribute group
-
-        https://tools.ietf.org/html/draft-sweet-rfc2910bis-07
-        Internet Printing Protocol/1.1: Encoding and Transport
-
-        3.1.2 Attribute Group
-
-        Each "attribute-group" field is encoded as follows:
-
-        -----------------------------------------------
-        |           begin-attribute-group-tag         |  1 byte
-        ----------------------------------------------------------
-        |                   attribute                 |  p bytes |- 0 or more
-        ----------------------------------------------------------
-    """
-    from collections import OrderedDict
-    attribute_dict = OrderedDict()
-    tag = ipp.read_tag()
-    while tag is not None:
-        dprint('')
-        tag_s = TAG_NAME.get(tag, 'UNKNOWN')
-        dprint('\ttag=0x%02x %s' % (tag, tag_s))
-        assert tag in GROUP_TAGS, tag
-        tag, attributes = parse_attr_1val(ipp)
-        combined_attributes = combine_attribute_values(attributes)
-        attribute_dict[tag_s] = combined_attributes
-
-    assert attribute_dict
-    return attribute_dict
+        if tag is None:
+            break
+        group = parse_group(ipp, 0)
+        assert group, (group_tag, ipp)
+        top[tag] = group
+    return top
 
 
 RESULTS = 'results.tables'
@@ -485,9 +555,10 @@ def save_attribute_dict(path_in, attribute_dict):
         w = csv.writer(f)
         w.writerow(['group_tag', 'tag_name', 'name', 'value'])
         for group_tag, attributes in attribute_dict.items():
-            for tag_name, name, values in attributes:
-                print([name] + values, [len(values), tag_name, group_tag])
-                w.writerow([group_tag, tag_name, name] + values)
+            print('attributes=%s' % attributes)
+            for name, (tag, value) in attributes.items():
+                print('!@#', tag_name(group_tag), tag_name(tag), type(value), name, value)
+                w.writerow([group_tag, name, tag, value])
 
 
 def parse_body(path, ipp, parent):
@@ -496,6 +567,7 @@ def parse_body(path, ipp, parent):
         parent: parent request, if any
     """
     print('parse_body: ipp=%s,parent=%s' % (ipp, parent))
+    depth = 0  # !@#$ pass thru to reader
 
     ipp.header = {'version': ipp.read(2),
                   'op_status': be2(ipp.read(2)),
@@ -503,13 +575,14 @@ def parse_body(path, ipp, parent):
                   }
     print('HEADER', ipp.header)
 
-    attribute_dict = parse_group(ipp)
+    attribute_dict = parse_top(ipp)
     save_attribute_dict(path, attribute_dict)
     return attribute_dict
 
 
 def dump(text):
     import string
+    print('dump: text=%d' % len(text))
     visible = []
     v = []
     i0 = None
@@ -566,7 +639,6 @@ def process_file(path):
 
 
 def main():
-
     assert len(sys.argv) > 1, 'Usage: %s <control file>' % sys.argv[1]
     dir_name = sys.argv[1]
 
@@ -577,15 +649,17 @@ def main():
             path_attributes[path] = process_file(path)
         except Exception as e:
             bad_paths[path] = e
+            print('bad path="%s"' % path)
             raise
 
     print('$' * 80)
     pprint(bad_paths)
     print('%' * 80)
     name_vals = defaultdict(set)
-    for attr_val in path_attributes.values():
-        for _, attributes in attr_val.items():
-            for tag_name, name, values in attributes:
+    for attribute_dict in path_attributes.values():
+        for _, attributes in attribute_dict.items():
+            for name, (tag, value) in attributes.items():
+                values = value if isinstance(value, list) else [value]
                 for val in values:
                     if isinstance(val, str) and len(val) > 20:
                         continue
