@@ -250,9 +250,8 @@ def decode_datetime(value):
 
 class Group(object):
 
-    def __init__(self, name, member_name, value):
+    def __init__(self, name,  value):
         self.name = name
-        self.member_name = member_name
         self.value = value
 
     def __repr__(self):
@@ -404,31 +403,26 @@ def parse_value(ipp, depth, tag, value):
 
         assert value is None, (value, T(value))
 
-        attr_name_tag = ipp.read_tag()
-        assert attr_name_tag == IPP_TAG_MEMBERNAME, (tag_describe(attr_name_tag))
-        print('@@4', tag_describe(attr_name_tag))
-        n = be2(ipp.read(2))
-        assert n == 0, n
-        v = be2(ipp.read(2))
-        print('@@6', v)
-        member_name = ipp.read(v)
-        print('!!!!!**', depth + 1, T(member_name))
+        # attr_name_tag = ipp.read_tag()
+        # assert attr_name_tag == IPP_TAG_MEMBERNAME, (tag_describe(attr_name_tag))
+        # print('@@4', tag_describe(attr_name_tag))
+        # n = be2(ipp.read(2))
+        # assert n == 0, n
+        # v = be2(ipp.read(2))
+        # print('@@6', v)
+        # member_name = ipp.read(v)
+        # print('!!!!!**', depth + 1, T(member_name))
         # assert False
-        group_attributes = parse_group(ipp, depth + 1, member_name)
-        return Group(name, member_name, group_attributes)
+        group_attributes = parse_group(ipp, depth + 1)
+        return group_attributes
         assert n == 0, (tag, n)
 
     elif tag == IPP_TAG_END_COLLECTION:
 
-        return state == IPP_STATE_DATA
+        assert False
 
     elif tag == IPP_TAG_MEMBERNAME:
-        # Attaches to parent
-        assert attr, (tag, n)
-        assert n, (tag, n)
-
-        attr['name'] = text[:n]
-        attr['num_values'] -= 1
+        return T(value)
 
     else:  # Other unsupported values
         assert False, 'Unsupported'
@@ -465,40 +459,39 @@ def parse_group(ipp, depth, name=None):
     """
     print('----- parse_group ---- depth=%d' % depth)
     group = OrderedDict()
-    tag = None  `# if depth == 0 else IPP_TAG_BEGIN_COLLECTION
+    tag = None  # if depth == 0 else IPP_TAG_BEGIN_COLLECTION
     name = None
-    values = []
+    # values = []
 
-    def add_attribute(tag, name, values):
-        if name and values:
-            assert isinstance(name, str), name
-            value = values[0] if len(values) == 1 else values
-            group[name] = tag, value
+    truples = []
+
+    # def add_attribute(tag, name, values):
+    #     if name and values:
+    #         assert isinstance(name, str), name
+    #         value = values[0] if len(values) == 1 else values
+    #         group[name] = tag, value
 
     for cnt in range(10 ** 6):
-        tag_new = ipp.peek_tag()
-        if tag_new is None or tag_new in GROUP_TAGS:
+        tag = ipp.peek_tag()
+        if tag is None or tag in GROUP_TAGS:
             # assert False, (tag_describe(tag), cnt, ipp)
             assert depth == 0, (depth, tag_describe(tag))
             break
 
-        tag_new = ipp.read_tag()
+        ipp.read_tag()
 
-        if tag_new == IPP_TAG_END_COLLECTION:
+        if tag == IPP_TAG_END_COLLECTION:
+            ipp.read(4)
             print('### out of here', tag_describe(tag))
             break
 
         n = be2(ipp.read(2))
-        if n or tag_new == IPP_TAG_BEGIN_COLLECTION:
-            add_attribute(tag, name, values)
-            tag = tag_new
-            values = []
-            if n:
-                name = T(ipp.read(n))
-            else:
-                name = None
+        if n > 0:
+            name = T(ipp.read(n))
+        else:
+            name = None
 
-        assert tag is not None, tag_describe(tag_new)
+        assert tag is not None
 
         v = be2(ipp.read(2))
         dprint('parse_group: d=%d,i=%d,tag=%s,name=%s,v=%d' %
@@ -512,9 +505,64 @@ def parse_group(ipp, depth, name=None):
             value = None
 
         dprint('  value=%s %s' % (repr(value), type(value)))
-        values.append(value)
+        truples.append((tag, name, value))
 
-    add_attribute(tag, name, values)
+    assert truples
+
+    for i, (tag, name, value) in enumerate(truples):
+        if name is not None:
+            assert isinstance(name, str), (i, (tag, name, value))
+
+    truples2 = []
+    i = 0
+    accumulating = False
+    while i < len(truples):
+        tag0, name0, value0 = truples[i]
+        if tag0 == IPP_TAG_MEMBERNAME:
+            tag, name, value = truples[i + 1]
+            assert name0 is None, name0
+            assert name is None, name
+            assert isinstance(value0, str), value0
+            truples2.append((tag, value0, value))
+            print('^^^', i)
+            i += 2
+        else:
+            truples2.append((tag0, name0, value0))
+            if name0 is not None:
+                assert isinstance(name0, str), (i, (tag0, name0, value0))
+            i += 1
+
+    print('truples=%d' % len(truples))
+    print('truples2=%d' % len(truples2))
+
+    truples = truples2
+    for i, (tag, name, value) in enumerate(truples):
+        if name is not None:
+            assert isinstance(name, str), (i, (tag, name, value))
+
+    i = 0
+    accumulating = False
+    while i < len(truples):
+        tag, name, value = truples[i]
+        if not accumulating:
+            if name is None:
+                tag0, name0, value0 = truples[i - 1]
+                values = [value0, value]
+                accumulating = True
+        else:
+            if name is None:
+                values.append(value)
+            else:
+                accumulating = False
+                group[name0] = tag0, values
+        if accumulating:
+            assert tag == tag0
+        else:
+            group[name] = tag, value
+        i += 1
+
+    if accumulating and values:
+        group[name0] = tag0, values
 
     assert isinstance(group, dict), type(group)
     assert cnt
